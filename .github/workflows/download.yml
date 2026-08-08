@@ -1,0 +1,73 @@
+name: Download manga
+
+on:
+  workflow_dispatch:
+    inputs:
+      title_ids:
+        type: string
+        description: 'Manga IDs (comma-separated, e.g. "1,52"). Get IDs from --list.'
+        required: true
+      lang:
+        type: string
+        description: 'Language code: en / ja / zh-CN / ...'
+        default: 'en'
+        required: false
+      chapters:
+        type: string
+        description: 'Chapter range (e.g. "1-20"). Leave empty for all chapters.'
+        default: ''
+        required: false
+      quality:
+        type: choice
+        description: 'Image quality'
+        options:
+          - middle
+          - low
+        default: 'middle'
+        required: false
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    env:
+      TITLE_IDS: ${{ github.event.inputs.title_ids }}
+      LANG: ${{ github.event.inputs.lang }}
+      CHAPTERS: ${{ github.event.inputs.chapters }}
+      QUALITY: ${{ github.event.inputs.quality }}
+      DOWNLOAD_DIR: download
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependency
+        run: pip install pycryptodome
+
+      - name: Run downloader
+        run: |
+          set -e
+          mkdir -p "$DOWNLOAD_DIR"
+          IFS=',' read -ra IDS <<< "$TITLE_IDS"
+          for id in "${IDS[@]}"; do
+            id="$(echo "$id" | xargs)"   # trim whitespace
+            [ -z "$id" ] && continue
+            args=(--title "$id" --lang "$LANG" --output "$DOWNLOAD_DIR")
+            [ -n "$CHAPTERS" ] && args+=(--chapters "$CHAPTERS")
+            [ -n "$QUALITY" ] && args+=(--quality "$QUALITY")
+            python mangamillion_downloader.py "${args[@]}"
+          done
+
+      - name: Pack results
+        run: |
+          tar -zcvf manga_million.tar.gz "$DOWNLOAD_DIR"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: manga_million
+          path: manga_million.tar.gz
+          if-no-files-found: error
+          retention-days: 90
