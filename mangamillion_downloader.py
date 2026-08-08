@@ -3,12 +3,17 @@
 
 import argparse
 import gzip
+import html
 import http.client
+import mimetypes
 import os
 import re
 import ssl
 import sys
 import time
+import uuid
+import zipfile
+from pathlib import Path
 
 from Crypto.Cipher import AES
 
@@ -17,6 +22,7 @@ IMG_HOST = "img.mangamillion.shueisha.co.jp"
 SITE = "https://mangamillion.shueisha.co.jp"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+MIN_DOWNLOADED_IMAGE_BYTES = 1
 
 
 
@@ -282,6 +288,180 @@ def aes_decrypt(data, key_hex, iv_hex):
     return pt
 
 
+def natural_sort_key(value):
+    return [int(part) if part.isdigit() else part.casefold() for part in re.split(r"(\d+)", str(value))]
+
+
+def _epub_href(value):
+    import urllib.parse
+    return urllib.parse.quote(value, safe="/._-")
+
+
+def _media_type(path):
+    if path.suffix.lower() == ".webp":
+        return "image/webp"
+    return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
+
+def _downloaded_chapters(title_dir):
+    title_dir = Path(title_dir)
+    chapters = []
+    for chapter_dir in sorted((p for p in title_dir.iterdir() if p.is_dir()), key=lambda p: natural_sort_key(p.name)):
+        pages = sorted(
+            (p for p in chapter_dir.iterdir() if p.is_file() and p.suffix.lower() in {".webp", ".jpg", ".jpeg", ".png"}),
+            key=lambda p: natural_sort_key(p.name),
+        )
+        if pages:
+            chapters.append((chapter_dir.name, pages))
+    return chapters
+
+
+def _missing_title_dir_message(title_dir):
+    title_dir = Path(title_dir)
+    message = f"title directory does not exist: {title_dir}"
+    parent = title_dir.parent
+    if parent.is_dir():
+        candidates = sorted((p.name for p in parent.iterdir() if p.is_dir()), key=natural_sort_key)
+        if candidates:
+            message += "\nAvailable title directories:"
+            message += "".join(f"\n  {parent / name}" for name in candidates)
+    return message
+
+
+def page_already_downloaded(path):
+    path = Path(path)
+    return path.is_file() and path.stat().st_size > MIN_DOWNLOADED_IMAGE_BYTES
+
+
+def chapter_already_downloaded(chapter_dir, page_count):
+    chapter_dir = Path(chapter_dir)
+    if page_count <= 0:
+        return False
+    return all(page_already_downloaded(chapter_dir / f"{page_no:03d}.webp") for page_no in range(1, page_count + 1))
+
+
+def build_epub(title_dir, epub_path=None, title=None, author=None, language="en"):
+    title_dir = Path(title_dir)
+    if not title_dir.is_dir():
+        raise FileNotFoundError(_missing_title_dir_message(title_dir))
+
+    chapters = _downloaded_chapters(title_dir)
+    if not chapters:
+        raise RuntimeError(f"no downloaded chapter images found in {title_dir}")
+
+    title = title or title_dir.name
+    author = author or "Unknown"
+    language = language or "en"
+    epub_path = Path(epub_path) if epub_path else title_dir.with_suffix(".epub")
+    epub_path.parent.mkdir(parents=True, exist_ok=True)
+
+    identifier = f"urn:uuid:{uuid.uuid4()}"
+    manifest_items = [
+        '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
+    ]
+    spine_items = []
+    nav_items = []
+    chapter_docs = []
+    image_entries = []
+
+    for chapter_index, (chapter_name, pages) in enumerate(chapters, 1):
+        chapter_id = f"chapter_{chapter_index:03d}"
+        chapter_href = f"chapters/{chapter_id}.xhtml"
+        manifest_items.append(
+            f'<item id="{chapter_id}" href="{chapter_href}" media-type="application/xhtml+xml"/>'
+        )
+        spine_items.append(f'<itemref idref="{chapter_id}"/>')
+        nav_items.append(
+            f'<li><a href="{_epub_href(chapter_href)}">{html.escape(chapter_name)}</a></li>'
+        )
+
+        image_tags = []
+        for page_index, page in enumerate(pages, 1):
+            image_id = f"img_{chapter_index:03d}_{page_index:03d}"
+            image_href = f"images/{chapter_id}/{page.name}"
+            manifest_items.append(
+                f'<item id="{image_id}" href="{_epub_href(image_href)}" media-type="{_media_type(page)}"/>'
+            )
+            image_entries.append((page, f"EPUB/{image_href}"))
+            image_tags.append(
+                f'<img src="../{_epub_href(image_href)}" alt="{html.escape(chapter_name)} page {page_index}"/>'
+            )
+
+        chapter_docs.append((
+            f"EPUB/{chapter_href}",
+            f'''<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{html.escape(language)}" lang="{html.escape(language)}">
+<head>
+  <title>{html.escape(chapter_name)}</title>
+  <style>
+    body {{ margin: 0; padding: 0; background: #111; }}
+    section {{ margin: 0 auto; max-width: 100%; }}
+    img {{ display: block; width: 100%; height: auto; margin: 0 auto; }}
+  </style>
+</head>
+<body>
+  <section>
+    <h1>{html.escape(chapter_name)}</h1>
+    {chr(10).join(image_tags)}
+  </section>
+</body>
+</html>
+''',
+        ))
+
+    package_doc = f'''<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="bookid">{identifier}</dc:identifier>
+    <dc:title>{html.escape(title)}</dc:title>
+    <dc:creator>{html.escape(author)}</dc:creator>
+    <dc:language>{html.escape(language)}</dc:language>
+    <meta property="dcterms:modified">{time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}</meta>
+  </metadata>
+  <manifest>
+    {chr(10).join(manifest_items)}
+  </manifest>
+  <spine>
+    {chr(10).join(spine_items)}
+  </spine>
+</package>
+'''
+    nav_doc = f'''<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="{html.escape(language)}" lang="{html.escape(language)}">
+<head>
+  <title>{html.escape(title)}</title>
+</head>
+<body>
+  <nav epub:type="toc" id="toc">
+    <h1>{html.escape(title)}</h1>
+    <ol>
+      {chr(10).join(nav_items)}
+    </ol>
+  </nav>
+</body>
+</html>
+'''
+    container_doc = '''<?xml version="1.0" encoding="utf-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>
+'''
+
+    with zipfile.ZipFile(epub_path, "w") as archive:
+        archive.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+        archive.writestr("META-INF/container.xml", container_doc, compress_type=zipfile.ZIP_DEFLATED)
+        archive.writestr("EPUB/package.opf", package_doc, compress_type=zipfile.ZIP_DEFLATED)
+        archive.writestr("EPUB/nav.xhtml", nav_doc, compress_type=zipfile.ZIP_DEFLATED)
+        for chapter_name, chapter_doc in chapter_docs:
+            archive.writestr(chapter_name, chapter_doc, compress_type=zipfile.ZIP_DEFLATED)
+        for source_path, archive_name in image_entries:
+            archive.write(source_path, archive_name, compress_type=zipfile.ZIP_DEFLATED)
+
+    return epub_path
+
+
 
 def download_title(client, title_id, out_dir, lang, chapter_range=None, quality="middle"):
     os.makedirs(out_dir, exist_ok=True)
@@ -312,10 +492,13 @@ def download_title(client, title_id, out_dir, lang, chapter_range=None, quality=
         if not view["pages"]:
             print(f"  [skip] {ch_name}: no pages")
             continue
+        if chapter_already_downloaded(ch_dir, len(view["pages"])):
+            print(f"  [skip] {ch_name}: already downloaded")
+            continue
         print(f"  [{idx}/{len(chapters)}] {ch['number']} ({len(view['pages'])} pages)")
         for pno, url in enumerate(view["pages"], 1):
             fname = os.path.join(ch_dir, f"{pno:03d}.webp")
-            if os.path.exists(fname) and os.path.getsize(fname) > 0:
+            if page_already_downloaded(fname):
                 continue
             for _ in range(3):
                 st, enc = client._img(url)
@@ -338,7 +521,7 @@ def download_title(client, title_id, out_dir, lang, chapter_range=None, quality=
             if not os.path.exists(fname):
                 print(f"    [fail] page {pno}")
             time.sleep(client.throttle)
-    return title_dir
+    return title_dir, detail
 
 
 def _num(s):
@@ -355,7 +538,15 @@ def main():
     ap.add_argument("--output", default="manga_million", help="output directory")
     ap.add_argument("--quality", default="middle", help="image quality: middle (default) / low")
     ap.add_argument("--throttle", type=float, default=0.3, help="seconds between page downloads")
+    ap.add_argument("--epub", action="store_true", help="bundle the downloaded title into an EPUB file")
+    ap.add_argument("--epub-only", help="bundle an existing downloaded title directory into an EPUB file without downloading")
     args = ap.parse_args()
+
+    if args.epub_only:
+        epub_path = build_epub(args.epub_only, language=args.lang)
+        print(f"[epub] {epub_path}")
+        print("[done]")
+        return
 
     client = MMC(lang=args.lang, throttle=args.throttle)
     print(f"[auth] registering device token...")
@@ -374,7 +565,15 @@ def main():
         if args.chapters and "-" in args.chapters:
             a, b = args.chapters.split("-", 1)
             chap_range = (int(a), int(b))
-        download_title(client, args.title, args.output, args.lang, chap_range, args.quality)
+        title_dir, detail = download_title(client, args.title, args.output, args.lang, chap_range, args.quality)
+        if args.epub:
+            epub_path = build_epub(
+                title_dir,
+                title=detail.get("name") or Path(title_dir).name,
+                author=detail.get("author") or "Unknown",
+                language=args.lang,
+            )
+            print(f"[epub] {epub_path}")
         print("[done]")
         return
 

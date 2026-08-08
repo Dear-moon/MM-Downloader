@@ -12,13 +12,30 @@ Download manga from [MANGA MILLION](https://mangamillion.shueisha.co.jp) — Shu
 - No login required
 - List all available titles (~375)
 - Download a full series or a chapter range
+- Resume interrupted downloads by skipping already-downloaded pages and complete chapters
 - Multiple languages (`en`, `ja`, `zh-CN`, ...)
 - Pages are AES-decrypted and saved as `.webp`
+- Optionally bundle downloaded chapters into an `.epub`
+- Build an `.epub` from an existing downloaded title directory without downloading again
 
 ## Requirements
 
 - Python 3.8+
-- [`pycryptodome`](https://pypi.org/project/pycryptodome/): `pip install pycryptodome`
+- [`pycryptodome`](https://pypi.org/project/pycryptodome/)
+
+Install dependencies:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+```
+
+Or install the required dependency directly:
+
+```bash
+python -m pip install pycryptodome
+```
 
 ## GitHub Actions (one-click download)
 
@@ -47,9 +64,17 @@ python mangamillion_downloader.py --title 1 --lang en
 # Download only chapters 1-20
 python mangamillion_downloader.py --title 1 --chapters 1-20 --lang en
 
+# Download and create an EPUB next to the downloaded title directory
+python mangamillion_downloader.py --title 1 --chapters 1-20 --lang en --epub
+
+# Create an EPUB from a title that was already downloaded
+python mangamillion_downloader.py --epub-only "manga_million/One Piece" --lang en
+
 # Chinese version, custom output dir
 python mangamillion_downloader.py --title 1 --lang zh-CN --output ./manga
 ```
+
+Downloads are resumable. If a chapter directory already contains every expected page as a non-empty image file, the chapter is skipped. If only some pages are present, the downloader fetches the missing or invalid pages.
 
 ### Options
 
@@ -62,6 +87,8 @@ python mangamillion_downloader.py --title 1 --lang zh-CN --output ./manga
 | `--output <dir>` | Output directory (default `./manga_million`) |
 | `--quality <q>` | `middle` (default) / `low` |
 | `--throttle <sec>` | Delay between page downloads (default `0.3`) |
+| `--epub` | After downloading, bundle the title into an EPUB file |
+| `--epub-only <title-dir>` | Build an EPUB from an existing downloaded title directory without downloading |
 
 ### Output layout
 
@@ -72,7 +99,10 @@ manga_million/
       001.webp
       002.webp
       ...
+  One Piece.epub
 ```
+
+When `--epub` is used, the EPUB is written next to the title directory. With the default output directory, `manga_million/One Piece` becomes `manga_million/One Piece.epub`.
 
 ## How it works
 
@@ -82,6 +112,7 @@ The site is a Next.js SPA backed by a protobuf API (`api.mangamillion.shueisha.c
 2. Fetches manga list / title detail / chapter list through the API
 3. Requests each chapter's page URLs plus an AES key from `/api/viewer`
 4. Downloads the encrypted pages (`.webp.enc`) and decrypts them (AES-256-CBC)
+5. Optionally packages downloaded page images into an EPUB 3 archive
 
 Requests need a full browser-like header set (a missing `Accept-Encoding` triggers a Varnish 403), and the device token expires after a while — the script re-registers automatically on a 403.
 
