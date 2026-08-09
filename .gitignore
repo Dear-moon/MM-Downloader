@@ -7,3 +7,6 @@ venv/
 
 # Download output
 /manga_million/
+
+# macOS
+.DS_Store
