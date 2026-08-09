@@ -48,6 +48,7 @@ No local setup needed — download directly on GitHub:
    - `lang`: language (default `en`)
    - `chapters`: chapter range, leave empty for all chapters
    - `quality`: `middle` / `low`
+   - `epub`: `no` / `yes` — bundle the downloaded chapters into an EPUB (default `no`)
 4. Run. When it finishes, download the `manga_million` artifact (tar.gz) from the workflow run page.
 
 The workflow runs the same script on `ubuntu-latest` and uploads the result as an artifact (kept 90 days). Note that GitHub Actions runners use US/EU IPs, which works fine for MANGA MILLION's overseas service — but the site may block certain regions, so behavior can vary.
