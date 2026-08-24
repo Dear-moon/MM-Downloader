@@ -1,22 +1,32 @@
 # MM-Downloader
 
-Download manga from [MANGA MILLION](https://mangamillion.shueisha.co.jp) — Shueisha's free global manga service — for personal offline reading.
+Multi-source manga downloader built around [MANGA MILLION](https://mangamillion.shueisha.co.jp). It's a pluggable framework: add a new comic platform as a `source`. Use the `--source` flag to pick one.
+
+> v2.x = multi-source framework. The original single-platform tool lives on the `v1.0` branch.
 
 ## ⚠️ Disclaimer
 
-- For **personal offline reading only**. All content © Shueisha Inc. **Do not redistribute.**
+- For **personal offline reading only**. All content © its respective rights holders. **Do not redistribute.**
 - MANGA MILLION is a limited-time free service (expected to run until ~Dec 2027). The tool may need updates if the service changes.
 
 ## Features
 
-- No login required
-- List all available titles (~375)
-- Download a full series or a chapter range
-- Resume interrupted downloads by skipping already-downloaded pages and complete chapters
-- Multiple languages (`en`, `ja`, `zh-CN`, ...)
-- Pages are AES-decrypted and saved as `.webp`
-- Optionally bundle downloaded chapters into an `.epub`
-- Build an `.epub` from an existing downloaded title directory without downloading again
+- Pluggable **source** architecture — swap platforms with `--source`
+- List all available titles, download a full series or a chapter range
+- Resume interrupted downloads (skip already-downloaded pages and complete chapters)
+- Bundle downloaded chapters into an `.epub`
+- No login required for the default source
+
+## Sources
+
+| Source | Status | Auth | Notes |
+|--------|--------|------|-------|
+| `mangamillion` | ✅ implemented | none (device token) | Shueisha free service, protobuf + AES decryption |
+| `tongli` | 🔜 planned | Bearer token | Taiwan publisher, JSON API, no DRM |
+| `bookwalker` | 🔜 planned | browser + session | **not** in actions; needs local browser |
+| `bilibili` | 🔜 planned | n/a | ECDH encrypted stream, complex |
+
+All sources emit the same normalized `Title → Chapter → Page` model, so downloads, resume, and EPUB export work identically across platforms.
 
 ## Requirements
 
@@ -44,52 +54,56 @@ No local setup needed — download directly on GitHub:
 1. Open the **Actions** tab → select the **Download manga** workflow
 2. Click **Run workflow**
 3. Fill in the inputs:
-   - `title_ids`: manga IDs, comma-separated (get them from `--list`)
+   - `source`: `mangamillion` (default) / `tongli`
+   - `title_ids`: manga IDs, comma-separated
    - `lang`: language (default `en`)
    - `chapters`: chapter range, leave empty for all chapters
    - `quality`: `middle` / `low`
-   - `epub`: `no` / `yes` — bundle the downloaded chapters into an EPUB (default `no`)
+   - `epub`: `no` / `yes` — bundle into an EPUB
 4. Run. When it finishes, download the `manga_million` artifact (tar.gz) from the workflow run page.
 
-The workflow runs the same script on `ubuntu-latest` and uploads the result as an artifact (kept 90 days). Note that GitHub Actions runners use US/EU IPs, which works fine for MANGA MILLION's overseas service — but the site may block certain regions, so behavior can vary.
+Note: `tongli` needs a `TONG_LI_TOKEN` repo secret, and the runner IP must be reachable by the service. `bookwalker` is intentionally not offered here (it needs a local browser login session).
 
 ## Usage
 
 ```bash
-# List all titles (use the ID from here with --title)
+# List available titles for the default source
 python mangamillion_downloader.py --list --lang en
+# or as a module:
+python -m mmdl --list --lang en
 
 # Download a full series (e.g. One Piece, id=1)
-python mangamillion_downloader.py --title 1 --lang en
+python -m mmdl --title 1 --lang en
 
 # Download only chapters 1-20
-python mangamillion_downloader.py --title 1 --chapters 1-20 --lang en
+python -m mmdl --title 1 --chapters 1-20 --lang en
 
-# Download and create an EPUB next to the downloaded title directory
-python mangamillion_downloader.py --title 1 --chapters 1-20 --lang en --epub
+# Download and create an EPUB next to the title directory
+python -m mmdl --title 1 --chapters 1-20 --lang en --epub
 
 # Create an EPUB from a title that was already downloaded
-python mangamillion_downloader.py --epub-only "manga_million/One Piece" --lang en
+python -m mmdl --epub-only "manga_million/One Piece" --lang en
 
-# Chinese version, custom output dir
-python mangamillion_downloader.py --title 1 --lang zh-CN --output ./manga
+# Pick a different source
+python -m mmdl --source tongli --title <id> --lang zh-TW
 ```
 
-Downloads are resumable. If a chapter directory already contains every expected page as a non-empty image file, the chapter is skipped. If only some pages are present, the downloader fetches the missing or invalid pages.
+> The legacy `python mangamillion_downloader.py ...` command still works — it's a thin shim over `mmdl.cli`.
 
 ### Options
 
 | Flag | Description |
 |------|-------------|
+| `--source` | Content source (default `mangamillion`) |
 | `--list` | List all titles, then exit |
-| `--title <id>` | `original_title_id` to download (shown by `--list`) |
-| `--lang <code>` | Language: `en` / `ja` / `zh-CN` / ... (default `en`) |
+| `--title <id>` | Title ID for the selected source |
+| `--lang <code>` | Language: `en` / `ja` / `zh-CN` / ... |
 | `--chapters <a-b>` | Download only this chapter range |
-| `--output <dir>` | Output directory (default `./manga_million`) |
-| `--quality <q>` | `middle` (default) / `low` |
+| `--output <dir>` | Output directory (default `manga_million`) |
+| `--quality <q>` | Image quality: `middle` / `low` |
 | `--throttle <sec>` | Delay between page downloads (default `0.3`) |
-| `--epub` | After downloading, bundle the title into an EPUB file |
-| `--epub-only <title-dir>` | Build an EPUB from an existing downloaded title directory without downloading |
+| `--epub` | After downloading, bundle the title into an EPUB |
+| `--epub-only <title-dir>` | Build an EPUB from an existing downloaded title directory |
 
 ### Output layout
 
@@ -103,19 +117,27 @@ manga_million/
   One Piece.epub
 ```
 
-When `--epub` is used, the EPUB is written next to the title directory. With the default output directory, `manga_million/One Piece` becomes `manga_million/One Piece.epub`.
-
 ## How it works
 
-The site is a Next.js SPA backed by a protobuf API (`api.mangamillion.shueisha.co.jp`). This tool:
+The default source hits MANGA MILLION's Next.js SPA, backed by a protobuf API (`api.mangamillion.shueisha.co.jp`):
 
 1. Registers a device token via `POST /api/register`
 2. Fetches manga list / title detail / chapter list through the API
 3. Requests each chapter's page URLs plus an AES key from `/api/viewer`
 4. Downloads the encrypted pages (`.webp.enc`) and decrypts them (AES-256-CBC)
-5. Optionally packages downloaded page images into an EPUB 3 archive
+5. Optionally packages images into an EPUB 3 archive
 
-Requests need a full browser-like header set (a missing `Accept-Encoding` triggers a Varnish 403), and the device token expires after a while — the script re-registers automatically on a 403.
+All sources share the same `core/` transport, resume, and EPUB logic. Each source (`sources/*.py`) only implements its own API calls, field mapping, and image handling via the `BaseSource` interface.
+
+## Project structure
+
+```
+mmdl/
+  core/        # transport, model, naming, resume, epub — platform agnostic
+  sources/     # base.BaseSource + one module per platform
+cli.py         # --source routing & capability gating
+mangamillion_downloader.py  # legacy shim
+```
 
 ## License
 
