@@ -63,7 +63,8 @@ class BookWalker(BaseSource):
             if not menu:
                 raise RuntimeError("BookWalker reader API not found (NFBR.a6G.Initializer.*.menu)")
             title_name = self._guess_name(client)
-            pages = self._gather_pages(client, menu)
+            total = self._total_pages(client)
+            pages = self._gather_pages(client, menu, total)
             chap = Chapter(id=url, number=str(len(pages)), name=title_name, pages=pages)
             return CaptureResult(
                 title=Title(source=self.name, id=url, name=title_name or "BookWalker"),
@@ -74,19 +75,58 @@ class BookWalker(BaseSource):
 
     def _guess_name(self, client):
         val = client.eval("document.title || ''")
-        # 形如 "エロいスキルで異世界無双 THE COMIC 1"
         if val:
             for sep in (" - ", " -", " | "):
                 if sep in val:
                     return val.split(sep)[0].strip()
         return val or "BookWalker"
 
-    def _gather_pages(self, client, menu):
-        """跳页 + 提取每个跨页的 2 个 canvas。返回到当前展示的那些页。"""
+    def _total_pages(self, client):
+        """从页面 `N/169` 读总页数。"""
+        import re
+        val = client.eval("(document.body.innerText||'').match(/\\d+\\s*\\/\\s*(\\d+)/)?document.body.innerText.match(/\\d+\\s*\\/\\s*(\\d+)/)[1]:''")
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return 0
+
+    def _gather_pages(self, client, menu, total=0):
+        """整章遍历: moveToPage(k) 逐跨页提取正文 canvas, 去重相邻重叠。
+
+        BW 页码 0-based(显示 N/169 时 moveToPage(N-1) 在当前页), 每页有 2 个 1289×1398
+        正文 canvas + 1 个封面占位(大而内容平). 翻页时相邻跨页共享边界页, 按 hash 去重.
+        若 total 未知, 则循环直到页码不再前进(到最后一页).
+        """
+        import hashlib
         import time
-        # 提取当前页（可能2 canvas = 跨页左右）
-        vals = client.extract_canvas_png()
-        outs = []
-        for data, w, h, idx in vals:
-            outs.append(Page(data=data, ext="png", mime="image/png"))
-        return outs
+
+        def h(data):
+            return hashlib.sha256(data).hexdigest()[:16]
+
+        pages = []
+        seen = set()
+        last_page = client.eval("document.body.innerText.match(/\\d+\\s*\\/\\s*(\\d+)/)?document.body.innerText.match(/\\d+\\s*\\/\\s*(\\d+)/)[1]:''")
+        try:
+            last_page = int(last_page)
+        except (TypeError, ValueError):
+            last_page = 0
+        if last_page:
+            total = last_page  # 兜底: 用页面读到的总页数
+
+        # 从第 0 页开始(0-based)
+        for idx in range(total):
+            self._move_to(client, menu, idx)
+            time.sleep(1.2)   # 等 canvas 绘制
+            for data, w, hh, i in client.extract_canvas_png():
+                # 只收正文页 canvas(近似等宽的漫画页)。BW 正文多是非 1:1 的竖版(如 1289×1398),
+                # 封面/占位通常是不同尺寸(如 1350×1920)或超小。用宽高落在漫画页尺寸带过滤。
+                if w < 500 or hh < 500:
+                    continue   # 过小图标
+                if w > 1350 or hh > 1500:
+                    continue   # 封面/大占位(约 1350×1920)
+                key = h(data)
+                if key in seen:
+                    continue
+                seen.add(key)
+                pages.append(Page(data=data, ext="png", mime="image/png"))
+        return pages
