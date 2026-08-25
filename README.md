@@ -23,8 +23,10 @@ Multi-source manga downloader built around [MANGA MILLION](https://mangamillion.
 |--------|--------|------|-------|
 | `mangamillion` | ✅ implemented | none (device token) | Shueisha free service, protobuf + AES decryption |
 | `tongli` | ✅ implemented | `TONG_LI_TOKEN` | Taiwan 東立 e-book, JSON API, Azure SAS image links (no DRM) |
-| `bookwalker` | 🔜 planned | browser + session | **not** in actions; needs local browser |
-| `bilibili` | 🔜 planned | n/a | ECDH encrypted stream, complex |
+| `bookwalker` | ✅ implemented | logged-in browser | Browser-assisted; needs a local debug Chrome (`--remote-debugging-port`), **not** in Actions |
+| `bilibili` | ✅ implemented | logged-in browser | Browser-assisted; canvas extraction, risk-controlled, **not** in Actions |
+
+**Browser-assisted sources** (`bookwalker`, `bilibili`) read the manga from the reader's `<canvas>` (cross-realm `toDataURL` to bypass canvas read-back patching) instead of the HTTP API. This requires your locally logged-in browser started with `--remote-debugging-port=9222 --remote-allow-origins=*`. They can't run in GitHub Actions (no login session there) and need `pip install websocket-client`.
 
 **Tongli note**: browse endpoints (`/Book`, `/Book/BookVol`) don't need auth, but `/Comic/sas` (which returns the per-page image URLs) requires a Firebase Bearer token. Free-trial pages are subject to the service's session/time limits, so a given volume may return fewer or zero readable pages over time. Set `TONG_LI_TOKEN` (env) or `~/.mmdl/config.ini`, or pass `--token`.
 
@@ -88,6 +90,12 @@ python -m mmdl --epub-only "manga_million/One Piece" --lang en
 
 # Pick a different source (Tongli — needs its Bearer token)
 python -m mmdl --source tongli --title <volume-guid> --lang zh-TW --token "$TONG_LI_TOKEN"
+
+# Browser-assisted: BookWalker reader URL (needs logged-in browser on :9222)
+python -m mmdl --source bookwalker --url "https://viewer.bookwalker.jp/03/30/viewer.html?cid=<uuid>&cty=1"
+
+# Browser-assisted: Bilibili manga reader URL
+python -m mmdl --source bilibili --url "<manga-bilibili-reader-url>"
 ```
 
 > The legacy `python mangamillion_downloader.py ...` command still works — it's a thin shim over `mmdl.cli`.
