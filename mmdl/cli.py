@@ -26,6 +26,8 @@ def build_parser():
     ap.add_argument("--throttle", type=float, default=0.3, help="单页下载间隔秒数")
     ap.add_argument("--epub", action="store_true", help="下载后打包为 EPUB")
     ap.add_argument("--epub-only", help="只把已下载目录打包为 EPUB，不下载")
+    ap.add_argument("--token", help="source 的鉴权 token（如东立 Bearer 值）")
+    ap.add_argument("--book-group", help="source 可选参数（如东立的 BookGroupID）")
     return ap
 
 
@@ -50,6 +52,13 @@ def _validate(source, args):
 def main(argv=None):
     args = build_parser().parse_args(argv)
     source = get_source(args.source)
+    # 把 CLI 通用参数注入 source（东立等需要 token/book_group 的源）
+    if args.token is not None and hasattr(source, "token"):
+        source.token = args.token
+        if source._client is not None:
+            source._client.extra_headers["Authorization"] = f"bearer {args.token}"
+    if args.book_group is not None and hasattr(source, "book_group"):
+        source.book_group = args.book_group
     _validate(source, args)
 
     # --epub-only 源无关，只管磁盘树

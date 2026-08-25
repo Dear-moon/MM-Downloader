@@ -22,9 +22,11 @@ Multi-source manga downloader built around [MANGA MILLION](https://mangamillion.
 | Source | Status | Auth | Notes |
 |--------|--------|------|-------|
 | `mangamillion` | ✅ implemented | none (device token) | Shueisha free service, protobuf + AES decryption |
-| `tongli` | 🔜 planned | Bearer token | Taiwan publisher, JSON API, no DRM |
+| `tongli` | ✅ implemented | `TONG_LI_TOKEN` | Taiwan 東立 e-book, JSON API, Azure SAS image links (no DRM) |
 | `bookwalker` | 🔜 planned | browser + session | **not** in actions; needs local browser |
 | `bilibili` | 🔜 planned | n/a | ECDH encrypted stream, complex |
+
+**Tongli note**: browse endpoints (`/Book`, `/Book/BookVol`) don't need auth, but `/Comic/sas` (which returns the per-page image URLs) requires a Firebase Bearer token. Free-trial pages are subject to the service's session/time limits, so a given volume may return fewer or zero readable pages over time. Set `TONG_LI_TOKEN` (env) or `~/.mmdl/config.ini`, or pass `--token`.
 
 All sources emit the same normalized `Title → Chapter → Page` model, so downloads, resume, and EPUB export work identically across platforms.
 
@@ -84,8 +86,8 @@ python -m mmdl --title 1 --chapters 1-20 --lang en --epub
 # Create an EPUB from a title that was already downloaded
 python -m mmdl --epub-only "manga_million/One Piece" --lang en
 
-# Pick a different source
-python -m mmdl --source tongli --title <id> --lang zh-TW
+# Pick a different source (Tongli — needs its Bearer token)
+python -m mmdl --source tongli --title <volume-guid> --lang zh-TW --token "$TONG_LI_TOKEN"
 ```
 
 > The legacy `python mangamillion_downloader.py ...` command still works — it's a thin shim over `mmdl.cli`.
@@ -104,6 +106,8 @@ python -m mmdl --source tongli --title <id> --lang zh-TW
 | `--throttle <sec>` | Delay between page downloads (default `0.3`) |
 | `--epub` | After downloading, bundle the title into an EPUB |
 | `--epub-only <title-dir>` | Build an EPUB from an existing downloaded title directory |
+| `--token <t>` | Source auth token (e.g. Tongli Bearer value) |
+| `--book-group <g>` | Source optional param (e.g. Tongli BookGroupID) |
 
 ### Output layout
 
