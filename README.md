@@ -131,15 +131,22 @@ manga_million/
 
 ## How it works
 
-The default source hits MANGA MILLION's Next.js SPA, backed by a protobuf API (`api.mangamillion.shueisha.co.jp`):
+Every source exposes the `BaseSource` interface (`sources/base.py`) and normalizes its platform's
+responses into a shared `Title → Chapter → Page` model, so downloads, resume, and EPUB export work
+identically. Sources fall into two capability tracks:
 
-1. Registers a device token via `POST /api/register`
-2. Fetches manga list / title detail / chapter list through the API
-3. Requests each chapter's page URLs plus an AES key from `/api/viewer`
-4. Downloads the encrypted pages (`.webp.enc`) and decrypts them (AES-256-CBC)
-5. Optionally packages images into an EPUB 3 archive
+**crawl** — pure HTTP, drive the whole pipeline (`mangamillion`, `tongli`):
+1. Resolve `title → chapters → pages` through the platform API
+2. Download each page's bytes — MangaMillion decrypts AES-256-CBC, Tongli fetches Azure SAS links
+3. Optionally package the images into an EPUB 3 archive
 
-All sources share the same `core/` transport, resume, and EPUB logic. Each source (`sources/*.py`) only implements its own API calls, field mapping, and image handling via the `BaseSource` interface.
+**capture** — browser-assisted, need a locally logged-in reader (`bookwalker`, `bilibili`):
+1. Connect to your debug browser on `:9222`
+2. Read the manga from the reader's `<canvas>` via cross-realm `toDataURL` (bypasses canvas patching)
+3. Page through the reader slowly (≥1.5s) and extract the raw images
+
+Shared `core/` handles transport, resume, and EPUB packaging; each `sources/*.py` only implements its
+own API calls, field mapping, and image handling.
 
 ## Project structure
 
