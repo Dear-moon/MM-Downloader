@@ -25,6 +25,8 @@ Multi-source manga downloader built around [MANGA MILLION](https://mangamillion.
 | `tongli` | ✅ implemented | auto login (`refreshToken`) | Taiwan 東立 e-book, JSON API, Azure SAS image links (no DRM) |
 | `bookwalker` | ✅ implemented | logged-in browser | Browser-assisted; needs a local debug Chrome (`--remote-debugging-port`), **not** in Actions |
 | `bilibili` | ✅ implemented | logged-in browser | Browser-assisted; canvas extraction, risk-controlled, **not** in Actions |
+| `kobo` | ⏳ planned | Kobo email (web activation) | Whole-book `.kepub` via Kobo store API + planned + on-demand page extract; design in `` |
+| `readmoo` | ⏳ planned | Readmoo desktop app (local proxy) | Decrypt books the Readmoo Windows app already downloaded via its `local service` proxy, then extract pages; design in `` |
 
 **Browser-assisted sources** (`bookwalker`, `bilibili`) read the manga from the reader's `<canvas>` (cross-realm `toDataURL` to bypass canvas read-back patching) instead of the HTTP API. This requires your locally logged-in browser started with `--remote-debugging-port=9222 --remote-allow-origins=*`. They can't run in GitHub Actions (no login session there) and need `pip install websocket-client`.
 
