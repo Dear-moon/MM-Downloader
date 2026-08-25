@@ -1,33 +1,52 @@
-"""東立 Firebase 认证：纯脚本登录 + refreshToken 自动刷新。
+"""東立 Firebase 认证：纯脚本登录 + refreshToken 自动刷新（无 DRM，密钥不硬编码）。
 
-前端用 signInWithEmailAndPassword，这里直调对应的 Firebase Auth REST API 拿
-idToken（1h 过期）/ refreshToken（长期）。resolve_access_token()：静态 token
-优先 → 缓存 refreshToken 刷新 → 否则邮箱登录。密码不落盘。
+前端用 signInWithEmailAndPassword，这里直调 Firebase Auth REST API 拿 idToken（约 1h
+过期）/ refreshToken（长期）。Firebase Web api key **不写死**：优先 TONG_LI_FIREBASE_API_KEY
+环境变量，否则运行时从東立官网前端 JS 抓取（该 key 本就公开在官网）。resolve_access_token()：
+静态 token → 缓存 refresh 刷新 → 邮箱登录。密码不落盘。
 """
 import getpass
 import json
 import os
+import re
 from pathlib import Path
 from configparser import ConfigParser
 
 from mmdl.core.http import HttpConfig, HttpClient, split_url
 
-FIREBASE_API_KEY = "REDACTED"
 SIGNIN_URL = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword"
-# refresh 端点必须带 API Key 认证（否则 403 "unregistered callers"）
-REFRESH_URL = "https://securetoken.googleapis.com/v1/token?key=" + FIREBASE_API_KEY
-
-# refreshToken 缓存路径（测试可覆盖）
+REFRESH_BASE = "https://securetoken.googleapis.com/v1/token"
+FIREBASE_JS = "https://ebook.tongli.com.tw/js/firebase_token.js"
 CRED_FILE = Path.home() / ".mmdl" / "tongli_refresh.json"
 TOKEN_KEY = "refresh_token"
+
+_KEY_CACHE = None
 
 
 def _http():
     return HttpClient(HttpConfig(content_type="application/json"))
 
 
+def _api_key():
+    """Firebase Web API key：env 优先，否则从東立官网前端抓取（缓存，避免重复请求）。"""
+    global _KEY_CACHE
+    if _KEY_CACHE:
+        return _KEY_CACHE
+    env = os.environ.get("TONG_LI_FIREBASE_API_KEY", "").strip()
+    if env:
+        _KEY_CACHE = env
+        return env
+    host, path = split_url(FIREBASE_JS)
+    st, body = _http().request(host, "GET", path)
+    if st == 200:
+        m = re.search(rb'apiKey\s*:\s*"([^"]+)"', body)
+        if m:
+            _KEY_CACHE = m.group(1).decode("utf-8")
+            return _KEY_CACHE
+    raise RuntimeError("cannot fetch Tongli Firebase api key (set TONG_LI_FIREBASE_API_KEY?)")
+
+
 def _raise_error(prefix, data):
-    """把 Firebase 错误结构（data["error"].message 或 data.status）转成 RuntimeError。"""
     err = data.get("error") if isinstance(data, dict) else data
     msg = ""
     if isinstance(err, dict):
@@ -40,8 +59,8 @@ def _raise_error(prefix, data):
 
 
 def signin_password(email, password):
-    """邮箱密码登录，返回 (idToken, refreshToken)。"""
-    host, path = split_url(SIGNIN_URL)
+    """邮箱登录，返回 (idToken, refreshToken)。"""
+    host, path = split_url(SIGNIN_URL + "?key=" + _api_key())
     body = json.dumps({"email": email, "password": password, "returnSecureToken": True}).encode()
     st, resp = _http().request(host, "POST", path, body=body, content_type="application/json")
     if st != 200:
@@ -53,13 +72,9 @@ def signin_password(email, password):
 
 
 def refresh_access_token(refresh_token):
-    """用 refreshToken 换新 idToken，返回 (idToken, 新 refreshToken)。"""
-    host, path = split_url(REFRESH_URL)
-    body = json.dumps({
-        "grant_type": "refresh_token",
-        "refresh_token": refresh_token,
-        "client_id": FIREBASE_API_KEY,
-    }).encode()
+    """refreshToken 换新 idToken，返回 (idToken, 新 refreshToken)。"""
+    host, path = split_url(REFRESH_BASE + "?key=" + _api_key())
+    body = json.dumps({"grant_type": "refresh_token", "refresh_token": refresh_token}).encode()
     st, resp = _http().request(host, "POST", path, body=body, content_type="application/json")
     if st != 200:
         _raise_error(f"Firebase refresh HTTP {st}", json.loads(resp.decode()))
@@ -70,7 +85,6 @@ def refresh_access_token(refresh_token):
 
 
 def load_refresh_token(path=CRED_FILE):
-    """读取缓存的 refreshToken；不存在/为空返回 ''。"""
     try:
         p = Path(path)
         if p.exists():
@@ -81,7 +95,6 @@ def load_refresh_token(path=CRED_FILE):
 
 
 def save_refresh_token(refresh_token, path=CRED_FILE):
-    """把 refreshToken 写缓存（0600）。"""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({TOKEN_KEY: refresh_token}), encoding="utf-8")
@@ -92,7 +105,6 @@ def save_refresh_token(refresh_token, path=CRED_FILE):
 
 
 def static_token():
-    """读静态 token（向后兼容 TONG_LI_TOKEN 或 ~/.mmdl/config.ini 的 [tongli] token）。"""
     env = os.environ.get("TONG_LI_TOKEN", "").strip()
     if env:
         return env
@@ -108,7 +120,6 @@ def static_token():
 
 
 def _login(email=None, password=None):
-    """用环境变量或交互输入邮箱密码，返回 (idToken, refreshToken)。密码不落盘。"""
     email = (email or os.environ.get("TONG_LI_EMAIL", "")).strip()
     password = password or os.environ.get("TONG_LI_PASSWORD", "")
     if not email:
