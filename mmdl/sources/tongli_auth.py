@@ -1,18 +1,8 @@
-"""東立 Firebase 认证：邮箱登录 + refreshToken 自动刷新（纯脚本，无浏览器）。
+"""東立 Firebase 认证：纯脚本登录 + refreshToken 自动刷新。
 
-東立前端用 `firebase.auth().signInWithEmailAndPassword(email, password)` 登录
-（ebook.tongli.com.tw/js/firebase_token.js 的 loginNormal），我们直接调它对应的
-Firebase Auth REST API 拿 idToken / refreshToken：
-
-- `idToken`（JWT，约 1 小时过期）是 `/Comic/sas` 需要的 `Authorization: bearer` 值
-- `refreshToken`（Google 长期凭证）可反复换取新 idToken → 实现免手动的自动刷新
-
-主入口 `resolve_access_token()`：静态 token（CLI/env/config.ini）优先 → 缓存
-refreshToken 刷新 → 否则交互登录（首次）。**密码永不落盘**；落盘的只有 refreshToken。
-
-已实测确认（2026-08）：identitytoolkit 的 signInWithPassword 在此项目（projectId=tongli-book,
-apiKey=REDACTED）开放且无 reCAPTCHA 拦截非浏览器请求
-（假凭据返回 EMAIL_NOT_FOUND 而非 operation-not-allowed / 验证码错误）。
+前端用 signInWithEmailAndPassword，这里直调对应的 Firebase Auth REST API 拿
+idToken（1h 过期）/ refreshToken（长期）。resolve_access_token()：静态 token
+优先 → 缓存 refreshToken 刷新 → 否则邮箱登录。密码不落盘。
 """
 import getpass
 import json
@@ -64,7 +54,7 @@ def signin_password(email, password):
 
 def refresh_access_token(refresh_token):
     """用 refreshToken 换新 idToken，返回 (idToken, 新 refreshToken)。"""
-    host, path = split_url(REFRESH_URL)   # path 自带 ?key=...
+    host, path = split_url(REFRESH_URL)
     body = json.dumps({
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
@@ -98,7 +88,7 @@ def save_refresh_token(refresh_token, path=CRED_FILE):
     try:
         os.chmod(p, 0o600)
     except OSError:
-        pass   # Windows 上 chmod 语义有限，忽略失败（不影响功能）
+        pass
 
 
 def static_token():
@@ -131,13 +121,7 @@ def _login(email=None, password=None):
 
 
 def resolve_access_token(cli_token=None, email=None, password=None, cred_file=CRED_FILE):
-    """返回当前可用的 idToken。
-
-    优先级：
-    1. cli_token / 静态来源（TONG_LI_TOKEN、~/.mmdl/config.ini）—— 显式静态 idToken，直接用；
-    2. 缓存的 refreshToken —— 自动刷新拿新 idToken；
-    3. 邮箱密码登录（TONG_LI_EMAIL/TONG_LI_PASSWORD 环境变量，或交互输入）—— 首次。
-    """
+    """返回可用 idToken：静态优先 → 缓存 refresh 刷新 → 邮箱登录（首次）。"""
     static = cli_token or static_token()
     if static:
         return static.strip()

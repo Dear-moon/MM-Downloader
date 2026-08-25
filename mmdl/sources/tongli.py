@@ -1,17 +1,7 @@
-"""東立電子書城 (Tongli) source：公开接口 + 免费试读 token，无 DRM。
+"""東立電子書城 source：公开接口 + 免费试读（无 DRM）。
 
-方案 A（免注册账号）：浏览页接口（/Book、/Book/BookVol）无需登录；取实际漫画页数据
-（/Comic/sas）需要 Firebase Bearer token（免费可取）。图片是 Azure Blob CDN 的 SAS
-签名直链（tongli-ebook-cdn），无加密，直接 GET 即可。
-
-已实测验证（2026-08，用登录态 Firebase token）：
-- GET /Book?bookID={guid}        书详情：Title/Vol/Page/Authors/CoverURL/BookGroupID/FreeTrialPageLimit
-- GET /Book/BookVol/{vol}?bookID={guid}   该系列集列表：[{BookID, Vol, ...}]
-- GET /Comic/sas/{单集bookID}?freeTrialToken=free + Authorization   每页 Pages[].ImageURL + IsLTR
-- ImageURL 是 Azure SAS 签名直链（se 约 7 分钟有效），即时下载
-
-token 获取（不硬编码）：--token 静态 > TONG_LI_TOKEN/config.ini 静态 > 缓存的 refreshToken
-自动刷新 > 首次交互登录。密码不落盘，只有 refreshToken 落盘。见 tongli_auth.py。
+/Book、/Book/BookVol 免登录；/Comic/sas 需要 Firebase Bearer token（见 tongli_auth.py，
+自动解析/刷新，密码不落盘）。图片是 Azure 签名直链，直接 GET。
 """
 from mmdl.core.http import HttpClient, HttpConfig, split_url
 from mmdl.core.model import Title, Chapter, Page
@@ -37,7 +27,7 @@ class Tongli(BaseSource):
                  email=None, password=None):
         super().__init__(throttle=throttle, lang=lang)
         self.book_group = book_group   # 可选 BookGroupID；缺省从 /Book 返回取
-        self.token = token             # 显式静态 idToken（--token/构造）；None=走 refresh/登录
+        self.token = token             # 显式静态 idToken；None 走 refresh/登录
         self.email = email
         self.password = password
         self._fresh = None             # 本进程内解析好的 idToken 缓存
@@ -116,7 +106,7 @@ class Tongli(BaseSource):
     def get_pages(self, chapter: Chapter, *, lang=None, quality=None, **kw):
         """Comic/sas 拿该集每页 ImageURL（Azure SAS 直链），需 token。
 
-        集数若为付费/无免费试读（Comic/sas 返回 404），返回空列表 → driver 跳过该集。
+        付费/无免费试读（非 200）返回空列表 → driver 跳过该集。
         """
         path = f"/Comic/sas/{chapter.id}"
         client = self._auth_client()
@@ -139,10 +129,8 @@ class Tongli(BaseSource):
 
     def download_page(self, page: Page, chapter: Chapter, *, lang=None, quality=None,
                       client=None, **kw):
-        """图片是 Azure SAS 签名直链，直接 GET 原始字节即可。
-
-        直链不需要 API token；共享 client 若带 Authorization（_auth_client 写入）会触发
-        Azure 400 "Both authorizations"，故下载前临时移除。
+        """直链直接 GET 原始字节。SAS 直链不需 token，共享 client 若带 Authorization
+        会触发 Azure 400 "Both authorizations"，故下载前临时移除。
         """
         if client is None:
             client = self.ensure_client()

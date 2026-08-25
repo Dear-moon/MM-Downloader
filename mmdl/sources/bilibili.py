@@ -1,17 +1,9 @@
-"""B站漫画 (bilibili manga) source —— 浏览器辅助方案（capture 轨）。
+"""B站漫画 source —— 浏览器辅助（capture 轨）。
 
-**经逆向确认**：B站纯 HTTP 不可行（GetImageIndex/ImageToken 被 `ultra_sign` 私有 WASM
-风控签名 + 浏览器指纹拦死，不带签名返回 code:99）。唯一可行路线是浏览器辅助：
-复用已登录阅读器页面自动发出的请求，从 `canvas` 提取明文原图。
-
-**已验证机制**（sub agent + 实测）：
-- 阅读器用 `.view-container` 里的 canvas 渲染（跨页 = 2 canvas，left=2k-1 页, right=2k 页）
-- B站 patch 了 `getImageData`/主 realm `toDataURL` → 用跨 realm iframe 原生 toDataURL 提取
-- 翻页：点击左 1/3(下页)/右 1/3(上页)，键盘 ArrowDown/PageDown/Hom
-- 风控：不能 reload、不能快速连翻（<1.5s）；一次会话一话、慢速逐排
-
-**依赖**：websocket-client（pip install websocket-client）+ 已登录的 B站 reader 浏览器页。
-本 source 进不了 GitHub Actions（依赖本地浏览器登录态）。
+纯 HTTP 被 ultra_sign 私有 WASM + 指纹拦死；走浏览器辅助：从阅读器 `.view-container`
+canvas 提取明文原图（跨 realm 原生 toDataURL 绕过 B站对主 realm toDataURL 的 patch）。
+**免费章节无登录可整话抓**；付费需登录态 + 慢速（<1.5s/跨页会触发账号风控）。
+依赖：websocket-client + 本机 debug 浏览器(:9222)。进不了 Actions。
 """
 from mmdl.core.model import Title, Chapter, Page, CaptureResult
 from .base import BaseSource
@@ -30,8 +22,7 @@ class Bilibili(BaseSource):
         super().__init__(throttle=throttle, lang=lang)
         self.cdp_url = cdp_url
         self.manga_name = manga_name
-        # 点击翻页坐标(视口比例)：左1/3下页、右1/3上页。可由用户传入/实测调整。
-        self.page_coords = page_coords or {"next": (258, 600), "prev": (773, 600)}
+        self.page_coords = page_coords or {"next": (258, 600), "prev": (773, 600)}   # 点击翻页(左1/3下页, 右1/3上页)
 
     def http_config(self):
         raise NotImplementedError("B站 is browser-based; no HTTP config.")
@@ -63,16 +54,14 @@ class Bilibili(BaseSource):
 
     def _guess_name(self, client):
         val = client.eval("document.title || ''")
-        # 名字形如 "48 - Unnamed Memory - 哔哩哔哩漫画"
-        part = (val or "").split("-")
+        part = (val or "").split("-")   # 形如 "48 - Unnamed Memory - 哔哩哔哩漫画"
         return part[1].strip() if len(part) > 1 else (val or "bilibili")
 
     def _extract_all(self, client):
         """提取当前页的全部漫画 canvas。返回 [Page(data=...)]。"""
         import time
-        time.sleep(1.5)   # 等 canvas 绘制稳定
-        results = client.extract_canvas_png()
-        return [Page(data=d, ext="png", mime="image/png") for d, w, h, _ in results]
+        time.sleep(1.5)
+        return [Page(data=d, ext="png", mime="image/png") for d, w, h, _ in client.extract_canvas_png()]
 
     def _pagenum(self, client):
         """当前跨页页码文本（形如 '1 2'），读不到返回 ''。"""
@@ -96,12 +85,9 @@ class Bilibili(BaseSource):
             return ""
 
     def _gather_pages(self, client, total=0):
-        """整话遍历：从当前跨页逐排提取 → ArrowDown 慢速翻页 → 去重。
+        """整话遍历：Home 回开头 → 逐跨页提取 → ArrowDown 慢速翻页 → 去重。
 
-        关键：收集满 total 页、或翻到本话末尾（页码不再前进）、或翻进下一话（ep 变化）
-        即停——避免 ArrowDown 越过本话边界进入下一话（下一话可能要登录，拿不到且触发风控）。
-        已实测（2026-08, Unnamed Memory 第1话）：免费章节无登录、每跨页约 2s 隔离。
-        付费章节仍需登录态 + 慢速（过快触发账号风控）。
+        收集满 total / 页码不前进 / ep 变化（翻进下一话）即停，防越过本话边界。
         """
         import hashlib, time
 
