@@ -43,10 +43,11 @@ class Bilibili(BaseSource):
     def capture_from_url(self, url, *, lang=None, quality=None, **kw):
         """读取当前已打开的 B站阅读器页，慢速翻页逐排提取整章。返回 CaptureResult。"""
         client = self._cdn_open()
+        client.connect()
         try:
             title_name = self.manga_name or self._guess_name(client)
-            pages = self._extract_all(client)
-            # 每个 .view-container 跨页有 2 canvas → 2 Page
+            total = self._total_pages(client)
+            pages = self._gather_pages(client, total=total)
             chapters = []
             chap = Chapter(id=url, number="", name=title_name or "reader", pages=pages)
             chapters.append(chap)
@@ -72,3 +73,64 @@ class Bilibili(BaseSource):
         time.sleep(1.5)   # 等 canvas 绘制稳定
         results = client.extract_canvas_png()
         return [Page(data=d, ext="png", mime="image/png") for d, w, h, _ in results]
+
+    def _pagenum(self, client):
+        """当前跨页页码文本（形如 '1 2'），读不到返回 ''。"""
+        val = client.eval(r"((document.body.innerText||'').match(/\d+\s*\n\s*\d+\s*\d+P?/)||[''])[0]")
+        return (val or "").strip()
+
+    def _total_pages(self, client):
+        """从 '…70P' 读总页数；读不到返回 0。"""
+        m = client.eval(r"((document.body.innerText||'').match(/(\d+)P\b/)||[])")
+        try:
+            return int(m[1])
+        except (TypeError, ValueError, IndexError):
+            return 0
+
+    def _ep_id(self, client):
+        """从 location.href 提取当前 ep 编号（如 1226681）；失败返回 ''。"""
+        m = client.eval(r"((location.href||'').match(/mc\d+\/(\d+)/)||[])")
+        try:
+            return m[1]
+        except (TypeError, IndexError):
+            return ""
+
+    def _gather_pages(self, client, total=0):
+        """整话遍历：从当前跨页逐排提取 → ArrowDown 慢速翻页 → 去重。
+
+        关键：收集满 total 页、或翻到本话末尾（页码不再前进）、或翻进下一话（ep 变化）
+        即停——避免 ArrowDown 越过本话边界进入下一话（下一话可能要登录，拿不到且触发风控）。
+        已实测（2026-08, Unnamed Memory 第1话）：免费章节无登录、每跨页约 2s 隔离。
+        付费章节仍需登录态 + 慢速（过快触发账号风控）。
+        """
+        import hashlib, time
+
+        def h(data):
+            return hashlib.sha256(data).hexdigest()[:16]
+
+        if not total:
+            total = self._total_pages(client)
+        client.key("Home", "Home", 36)   # 回到本话第 1 跨页(避开记住的阅读位置停在中间/末尾)
+        time.sleep(2.0)
+        pages, seen = [], set()
+        step, guard = 0, max(40, total or 40)
+        ep0 = self._ep_id(client)
+        while len(pages) < total and step < guard:
+            step += 1
+            for pg in self._extract_all(client):
+                key = h(pg.data)
+                if key in seen:
+                    continue
+                seen.add(key)
+                pages.append(pg)
+            if len(pages) >= total:      # 收集满即停，不翻越去下一话
+                break
+            page_str = self._pagenum(client)
+            client.key("ArrowDown", "ArrowDown", 40)
+            time.sleep(2.0)   # ≥ 风控阈值(1.5s)，慢速逐跨页
+            if self._ep_id(client) != ep0:   # 翻进了下一话（跨话）→ 停
+                break
+            nxt = self._pagenum(client)
+            if nxt == page_str:          # 翻不动 => 到底
+                break
+        return pages
