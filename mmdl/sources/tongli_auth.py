@@ -24,7 +24,8 @@ from mmdl.core.http import HttpConfig, HttpClient, split_url
 
 FIREBASE_API_KEY = "REDACTED"
 SIGNIN_URL = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword"
-REFRESH_URL = "https://securetoken.googleapis.com/v1/token"
+# refresh 端点必须带 API Key 认证（否则 403 "unregistered callers"）
+REFRESH_URL = "https://securetoken.googleapis.com/v1/token?key=" + FIREBASE_API_KEY
 
 # refreshToken 缓存路径（测试可覆盖）
 CRED_FILE = Path.home() / ".mmdl" / "tongli_refresh.json"

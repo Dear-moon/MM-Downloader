@@ -139,11 +139,20 @@ class Tongli(BaseSource):
 
     def download_page(self, page: Page, chapter: Chapter, *, lang=None, quality=None,
                       client=None, **kw):
-        """图片是 Azure SAS 签名直链，直接 GET 原始字节即可。"""
+        """图片是 Azure SAS 签名直链，直接 GET 原始字节即可。
+
+        直链不需要 API token；共享 client 若带 Authorization（_auth_client 写入）会触发
+        Azure 400 "Both authorizations"，故下载前临时移除。
+        """
         if client is None:
             client = self.ensure_client()
         host, path = split_url(page.url)
-        st, body = client.request(host, "GET", path)
+        auth = client.extra_headers.pop("Authorization", None)
+        try:
+            st, body = client.request(host, "GET", path, img=True)
+        finally:
+            if auth is not None:
+                client.extra_headers["Authorization"] = auth
         if st == 200 and body:
             return body
         raise RuntimeError(f"download page HTTP {st}")
