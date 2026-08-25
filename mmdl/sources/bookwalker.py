@@ -65,7 +65,8 @@ class BookWalker(BaseSource):
             title_name = self._guess_name(client)
             total = self._total_pages(client)
             pages = self._gather_pages(client, menu, total)
-            chap = Chapter(id=url, number=str(len(pages)), name=title_name, pages=pages)
+            # Chapter 名不设书名(避免目录嵌套为 书/书/); 让 _write_capture fallback 到 chapter_001
+            chap = Chapter(id=url, number=str(len(pages)), name="", pages=pages)
             return CaptureResult(
                 title=Title(source=self.name, id=url, name=title_name or "BookWalker"),
                 chapters=[chap],

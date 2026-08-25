@@ -99,21 +99,19 @@ def main(argv=None):
 
 
 def _write_capture(source, result, out_dir, args):
-    """capture 轨落盘（延后，BookWalker 用）。"""
-    from .core.driver import _save_chapter  # 复用同一套落盘逻辑
+    """capture 轨落盘（浏览器辅助 source 如 BookWalker/B站）。"""
+    from .core.driver import save_captured_chapter  # 直接写已提取的 Page.data
 
     out_dir = Path(out_dir)
     title_dir = out_dir / (result.title.name or "captured")
     title_dir.mkdir(parents=True, exist_ok=True)
     print(f"[title] {result.title.name}")
 
-    client = source.ensure_client()
     for idx, ch in enumerate(result.chapters, 1):
         ch_dir = title_dir / (ch.name or f"chapter_{idx:03d}")
         ch_dir.mkdir(parents=True, exist_ok=True)
-        _save_chapter(source, ch, ch_dir, ch.pages or [], lang=args.lang,
-                      quality=args.quality, throttle=args.throttle, client=client)
-        print(f"  [{idx}/{len(result.chapters)}] {ch.name}")
+        n = save_captured_chapter(ch_dir, ch.pages or [])
+        print(f"  [{idx}/{len(result.chapters)}] {ch.name} ({n} pages)")
 
     if args.epub:
         epub_path = build_epub(title_dir, title=result.title.name,

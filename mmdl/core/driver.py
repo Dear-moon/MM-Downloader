@@ -11,6 +11,26 @@ from .naming import clean_name, _num
 from .resume import page_already_downloaded, chapter_already_downloaded
 
 
+def save_captured_chapter(ch_dir, pages):
+    """直接把 capture 轨已提取好的 Page.data 逐页落盘（BW/B站）。返回落盘页数。
+
+    BW 的 capture_from_url 已把每页字节装在 page.data 里，不再走 download_page。
+    """
+    ch_dir = Path(ch_dir)
+    ch_dir.mkdir(parents=True, exist_ok=True)
+    n = 0
+    for pno, page in enumerate(pages, 1):
+        if not page.data:
+            continue
+        ext = page.ext or "png"
+        (ch_dir / f"{pno:03d}.{ext}").write_bytes(page.data)
+        # 进度：仅打印每 10 页或首尾，避免刷屏
+        if n % 10 == 0 or n < 2:
+            print(f"    page {pno} ok ({len(page.data)} bytes)")
+        n += 1
+    return n
+
+
 def _save_chapter(source, chapter, ch_dir, pages, *, lang=None, quality=None,
                   throttle=0.3, client=None):
     """逐页下载并落盘到 ch_dir。返回失败页数或 None。"""
