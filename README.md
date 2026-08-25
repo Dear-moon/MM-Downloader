@@ -22,13 +22,13 @@ Multi-source manga downloader built around [MANGA MILLION](https://mangamillion.
 | Source | Status | Auth | Notes |
 |--------|--------|------|-------|
 | `mangamillion` | ✅ implemented | none (device token) | Shueisha free service, protobuf + AES decryption |
-| `tongli` | ✅ implemented | `TONG_LI_TOKEN` | Taiwan 東立 e-book, JSON API, Azure SAS image links (no DRM) |
+| `tongli` | ✅ implemented | auto login (`refreshToken`) | Taiwan 東立 e-book, JSON API, Azure SAS image links (no DRM) |
 | `bookwalker` | ✅ implemented | logged-in browser | Browser-assisted; needs a local debug Chrome (`--remote-debugging-port`), **not** in Actions |
 | `bilibili` | ✅ implemented | logged-in browser | Browser-assisted; canvas extraction, risk-controlled, **not** in Actions |
 
 **Browser-assisted sources** (`bookwalker`, `bilibili`) read the manga from the reader's `<canvas>` (cross-realm `toDataURL` to bypass canvas read-back patching) instead of the HTTP API. This requires your locally logged-in browser started with `--remote-debugging-port=9222 --remote-allow-origins=*`. They can't run in GitHub Actions (no login session there) and need `pip install websocket-client`.
 
-**Tongli note**: browse endpoints (`/Book`, `/Book/BookVol`) don't need auth, but `/Comic/sas` (which returns the per-page image URLs) requires a Firebase Bearer token. Free-trial pages are subject to the service's session/time limits, so a given volume may return fewer or zero readable pages over time. Set `TONG_LI_TOKEN` (env) or `~/.mmdl/config.ini`, or pass `--token`.
+**Tongli note**: browse endpoints (`/Book`, `/Book/BookVol`) don't need auth, but `/Comic/sas` (which returns the per-page image URLs) requires a Firebase Bearer (`idToken`). The tool logs you in automatically — on first run it prompts for your Tongli email/password (never stored) and caches the Firebase `refreshToken` in `~/.mmdl/tongli_refresh.json`; every later run refreshes it silently, so no manual F12/paste. Use `TONG_LI_EMAIL`/`TONG_LI_PASSWORD` env vars instead of the prompt (also how it runs in GitHub Actions). You can still pin a static token with `TONG_LI_TOKEN` (env), `~/.mmdl/config.ini`, or `--token`. Free-trial pages are subject to the service's session/time limits, so a given volume may return fewer or zero readable pages over time.
 
 All sources emit the same normalized `Title → Chapter → Page` model, so downloads, resume, and EPUB export work identically across platforms.
 
@@ -66,7 +66,7 @@ No local setup needed — download directly on GitHub:
    - `epub`: `no` / `yes` — bundle into an EPUB
 4. Run. When it finishes, download the `manga_million` artifact (tar.gz) from the workflow run page.
 
-Note: `tongli` needs a `TONG_LI_TOKEN` repo secret, and the runner IP must be reachable by the service. `bookwalker` is intentionally not offered here (it needs a local browser login session).
+Note: `tongli` can authenticate in Actions with `TONG_LI_EMAIL`/`TONG_LI_PASSWORD` secrets (or a static `TONG_LI_TOKEN`), and the runner IP must be reachable by the service. `bookwalker` is intentionally not offered here (it needs a local browser login session).
 
 ## Usage
 
@@ -88,7 +88,9 @@ python -m mmdl --title 1 --chapters 1-20 --lang en --epub
 # Create an EPUB from a title that was already downloaded
 python -m mmdl --epub-only "manga_million/One Piece" --lang en
 
-# Pick a different source (Tongli — needs its Bearer token)
+# Pick a different source (Tongli — logs in automatically on first run)
+python -m mmdl --source tongli --title <volume-guid> --lang zh-TW
+# or pin a static token to skip auto-login:
 python -m mmdl --source tongli --title <volume-guid> --lang zh-TW --token "$TONG_LI_TOKEN"
 
 # Browser-assisted: BookWalker reader URL (needs logged-in browser on :9222)

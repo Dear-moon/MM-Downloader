@@ -10,40 +10,19 @@
 - GET /Comic/sas/{单集bookID}?freeTrialToken=free + Authorization   每页 Pages[].ImageURL + IsLTR
 - ImageURL 是 Azure SAS 签名直链（se 约 7 分钟有效），即时下载
 
-token 获取优先级（不硬编码）：--token 命令行 > TONG_LI_TOKEN 环境变量 > ~/.mmdl/config.ini。
+token 获取（不硬编码）：--token 静态 > TONG_LI_TOKEN/config.ini 静态 > 缓存的 refreshToken
+自动刷新 > 首次交互登录。密码不落盘，只有 refreshToken 落盘。见 tongli_auth.py。
 """
-import os
-from pathlib import Path
-from configparser import ConfigParser
-
 from mmdl.core.http import HttpClient, HttpConfig, split_url
 from mmdl.core.model import Title, Chapter, Page
 from .base import BaseSource
+from .tongli_auth import resolve_access_token
 
 API_HOST = "api.tongli.tw"
 SITE = "https://ebook.tongli.com.tw"
 
 # 免费试读 token（Comic/sas 索取试读页数据时附带）
 FREE_TRIAL = "free"
-
-
-def _resolve_token(cli_token=None, env="TONG_LI_TOKEN", config_path=None):
-    """按优先级解析东立 Bearer token：CLI > 环境变量 > 配置文件。"""
-    if cli_token:
-        return cli_token.strip()
-    env_tok = os.environ.get(env)
-    if env_tok:
-        return env_tok.strip()
-    cfg = config_path or Path.home() / ".mmdl" / "config.ini"
-    try:
-        p = ConfigParser()
-        p.read(cfg, encoding="utf-8")
-        tok = p.get("tongli", "token", fallback="").strip()
-        if tok:
-            return tok
-    except Exception:
-        pass
-    return ""
 
 
 class Tongli(BaseSource):
@@ -54,10 +33,14 @@ class Tongli(BaseSource):
     capabilities = frozenset({"crawl"})   # 不对外 list（public 检索有限），按 bookID 抓取
     default_output = "manga_million"
 
-    def __init__(self, throttle=0.0, lang="zh-TW", book_group=None, token=None):
+    def __init__(self, throttle=0.0, lang="zh-TW", book_group=None, token=None,
+                 email=None, password=None):
         super().__init__(throttle=throttle, lang=lang)
         self.book_group = book_group   # 可选 BookGroupID；缺省从 /Book 返回取
-        self.token = token or _resolve_token()
+        self.token = token             # 显式静态 idToken（--token/构造）；None=走 refresh/登录
+        self.email = email
+        self.password = password
+        self._fresh = None             # 本进程内解析好的 idToken 缓存
 
     # ---- HTTP ----
     def http_config(self) -> HttpConfig:
@@ -73,6 +56,22 @@ class Tongli(BaseSource):
 
     def make_client(self, throttle=0.0) -> HttpClient:
         return HttpClient(self.http_config(), throttle=throttle)
+
+    # ---- 认证 ----
+    def _access_token(self):
+        """返回可用 idToken。静态 token 优先；否则 resolve（结果缓存在 _fresh）。"""
+        if self.token:
+            return self.token
+        if self._fresh is None:
+            self._fresh = resolve_access_token(email=self.email, password=self.password)
+        return self._fresh
+
+    def _auth_client(self):
+        """返回带最新 Authorization 的共享 client（每次刷新 token 到 extra_headers）。"""
+        tok = self._access_token()
+        client = self.ensure_client()
+        client.extra_headers["Authorization"] = f"bearer {tok}"
+        return client
 
     # ---- API ----
     def _get(self, client, path, params=None):
@@ -119,12 +118,14 @@ class Tongli(BaseSource):
 
         集数若为付费/无免费试读（Comic/sas 返回 404），返回空列表 → driver 跳过该集。
         """
-        client = self.ensure_client()
-        if not self.token:
-            raise RuntimeError("Tongli needs a token for /Comic/sas. "
-                               "Set TONG_LI_TOKEN or ~/.mmdl/config.ini, or pass --token.")
-        st, body = client.request(API_HOST, "GET", f"/Comic/sas/{chapter.id}",
-                                  params={"freeTrialToken": FREE_TRIAL})
+        path = f"/Comic/sas/{chapter.id}"
+        client = self._auth_client()
+        st, body = client.request(API_HOST, "GET", path, params={"freeTrialToken": FREE_TRIAL})
+        if st == 401:
+            # token 失效（尤其 idToken 过期）→ 清缓存重解析后重试一次
+            self._fresh = None
+            client = self._auth_client()
+            st, body = client.request(API_HOST, "GET", path, params={"freeTrialToken": FREE_TRIAL})
         if st != 200:
             return []   # 该集无免费试读/不可访问，跳过（driver 会打印 skip）
         import json
