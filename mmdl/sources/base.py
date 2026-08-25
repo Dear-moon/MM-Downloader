@@ -31,18 +31,17 @@ class BaseSource(abc.ABC):
         self.lang = lang
         self._client: HttpClient | None = None
 
-    # ---- HTTP 配置 ----
-    @abc.abstractmethod
+    # ---- HTTP 配置（仅 crawl 源需要；浏览器辅助源如 bilibili/bookwalker 不适用，可忽略） ----
     def http_config(self) -> HttpConfig:
-        ...
+        """crawl 源返回 HttpConfig；浏览器源不适用。"""
+        raise NotImplementedError(f"{self.name} is not an HTTP source")
 
-    @abc.abstractmethod
     def make_client(self, throttle: float = 0.0) -> HttpClient:
-        """基于 http_config() 构造一个配置好的 HttpClient。"""
-        ...
+        """crawl 源基于 http_config 构造 client；浏览器源不适用。"""
+        raise NotImplementedError(f"{self.name} is not an HTTP source")
 
     def ensure_client(self) -> HttpClient:
-        """懒加载共享 HttpClient（source 内部所有请求走同一实例，保证 token 复用）。"""
+        """懒加载共享 HttpClient（crawl 源内部所有请求走同一实例，保证 token 复用）。"""
         if self._client is None:
             self._client = self.make_client(self.throttle)
         return self._client
