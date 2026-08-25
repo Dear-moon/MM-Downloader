@@ -74,8 +74,6 @@ Note: `tongli` can authenticate in Actions with `TONG_LI_EMAIL`/`TONG_LI_PASSWOR
 
 ```bash
 # List available titles for the default source
-python mangamillion_downloader.py --list --lang en
-# or as a module:
 python -m mmdl --list --lang en
 
 # Download a full series (e.g. One Piece, id=1)
@@ -101,8 +99,6 @@ python -m mmdl --source bookwalker --url "https://viewer.bookwalker.jp/03/30/vie
 # Browser-assisted: Bilibili manga reader URL
 python -m mmdl --source bilibili --url "<manga-bilibili-reader-url>"
 ```
-
-> The legacy `python mangamillion_downloader.py ...` command still works — it's a thin shim over `mmdl.cli`.
 
 ### Options
 
@@ -152,7 +148,6 @@ mmdl/
   core/        # transport, model, naming, resume, epub — platform agnostic
   sources/     # base.BaseSource + one module per platform
 cli.py         # --source routing & capability gating
-mangamillion_downloader.py  # legacy shim
 ```
 
 ## License
