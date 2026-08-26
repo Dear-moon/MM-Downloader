@@ -28,6 +28,10 @@ def build_parser():
     ap.add_argument("--epub-only", help="只把已下载目录打包为 EPUB，不下载")
     ap.add_argument("--token", help="source 的鉴权 token（如东立 Bearer 值）")
     ap.add_argument("--book-group", help="source 可选参数（如东立的 BookGroupID）")
+    ap.add_argument("--setup", action="store_true",
+                    help="一次性完成该 source 的账号激活/登录（如 --source kobo --setup）")
+    ap.add_argument("--adobe-setup", action="store_true",
+                    help="一次性 Adobe anonymous 激活（.acsm 兑现前置，仅 kobo）")
     return ap
 
 
@@ -41,10 +45,18 @@ def _validate(source, args):
             raise SystemExit(f"[error] --quality 可选值: {', '.join(source.quality_choices)}")
 
     caps = source.capabilities
+    if args.setup and not hasattr(source, "setup"):
+        raise SystemExit(f"[error] {source.name} 不支持 --setup")
+    if args.adobe_setup and not hasattr(source, "adobe_setup"):
+        raise SystemExit(f"[error] {source.name} 不支持 --adobe-setup")
     if args.list and "list" not in caps:
         raise SystemExit(f"[error] {source.name} 不支持 --list")
     if args.url and "capture" not in caps:
         raise SystemExit(f"[error] {source.name} 不支持 --url（非 capture 源）")
+    if args.title and "book" not in caps and "crawl" not in caps:
+        raise SystemExit(f"[error] {source.name} 不支持 --title")
+    if args.title and "book" in caps and (args.url or args.list):
+        raise SystemExit("[error] book 源不能用 --url/--list（其只吃 --title）")
     if args.epub_only and args.title:
         raise SystemExit("[error] --epub-only 与 --title 不能同时使用")
 
@@ -67,11 +79,29 @@ def main(argv=None):
         print(f"[epub] {epub_path}")
         raise SystemExit(0)
 
+    # --setup：一次性激活（如 Kobo）
+    if args.setup:
+        source.setup()
+        print("[done]")
+        return
+
+    # --adobe-setup：Adobe anonymous 激活（kobo .acsm 兑现前置）
+    if args.adobe_setup:
+        source.adobe_setup()
+        print("[done]")
+        return
+
     out_dir = args.output or source.default_output
 
     # capture 轨（延后，BookWalker）
     if args.url:
         result = source.capture_from_url(args.url, lang=args.lang, quality=args.quality)
+        _write_capture(source, result, out_dir, args)
+        return
+
+    # book 轨（Kobo）：整本下载+解密+抽页 → 落盘同 capture
+    if args.title and "book" in source.capabilities:
+        result = source.get_book(args.title, lang=args.lang, quality=args.quality)
         _write_capture(source, result, out_dir, args)
         return
 

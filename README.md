@@ -25,10 +25,12 @@ Multi-source manga downloader built around [MANGA MILLION](https://mangamillion.
 | `tongli` | ✅ implemented | auto login (`refreshToken`) | Taiwan 東立 e-book, JSON API, Azure SAS image links (no DRM) |
 | `bookwalker` | ✅ implemented | logged-in browser | Browser-assisted; needs a local debug Chrome (`--remote-debugging-port`), **not** in Actions |
 | `bilibili` | ✅ implemented | logged-in browser | Browser-assisted; canvas extraction, risk-controlled, **not** in Actions |
-| `kobo` | ⏳ planned | Kobo email (web activation) | Planned source |
+| `kobo` | ✅ implemented | Kobo web activation · ADE import | **book** track: fetch whole `.kepub` + Obok decrypt. Adobe ADE: `.acsm` fulfill (Auth/InitLicenseService/Fulfill) + ADEPT content-decrypt. **not** in Actions |
 | `readmoo` | ⏳ planned | Readmoo desktop app | Planned source |
 
 **Browser-assisted sources** (`bookwalker`, `bilibili`) read the manga from the reader's `<canvas>` (cross-realm `toDataURL` to bypass canvas read-back patching) instead of the HTTP API. This requires your locally logged-in browser started with `--remote-debugging-port=9222 --remote-allow-origins=*`. They can't run in GitHub Actions (no login session there) and need `pip install websocket-client`.
+
+**`kobo` (book track)**: unlike the crawl/capture tracks it fetches the **whole** DRM'd fixed-layout `.kepub`, decrypts it with the Obok scheme (`mmdl/sources/kobo_drm.py`), then extracts pages by OPF spine order (`page_extract.py`). `--source kobo --setup` does a one-time browser-CDP activation (writes `~/.mmdl/kobo.json`, never stores your password). For **Adobe ADE** books (Kobo free samples are often `.acsm`), `--adobe-setup` imports your machine's already-authorized ADE device identity from the registry (`HKCU\Software\Adobe\Adept`), then the tool runs the full ADEPT flow — operator `Auth` → `InitLicenseService` → `Fulfill` → download → decrypt (`kobo_acsm.py` + `adept_drm.py`). Not in Actions.
 
 **Tongli note**: browse endpoints (`/Book`, `/Book/BookVol`) don't need auth, but `/Comic/sas` (which returns the per-page image URLs) requires a Firebase Bearer (`idToken`). The tool logs you in automatically — on first run it prompts for your Tongli email/password (never stored) and caches the Firebase `refreshToken` in `~/.mmdl/tongli_refresh.json`; every later run refreshes it silently, so no manual F12/paste. Use `TONG_LI_EMAIL`/`TONG_LI_PASSWORD` env vars instead of the prompt (also how it runs in GitHub Actions). You can still pin a static token with `TONG_LI_TOKEN` (env), `~/.mmdl/config.ini`, or `--token`. Free-trial pages are subject to the service's session/time limits, so a given volume may return fewer or zero readable pages over time.
 
@@ -98,6 +100,14 @@ python -m mmdl --source bookwalker --url "https://viewer.bookwalker.jp/03/30/vie
 
 # Browser-assisted: Bilibili manga reader URL
 python -m mmdl --source bilibili --url "<manga-bilibili-reader-url>"
+
+# Kobo (book track): one-time browser activation, then fetch a book by Kobo content id
+python -m mmdl --source kobo --setup
+python -m mmdl --source kobo --title "<kobo-content-id>" --output out
+
+# Kobo Adobe ADE (.acsm) books: import your ADE identity, then point --title at the .acsm file
+python -m mmdl --source kobo --adobe-setup
+python -m mmdl --source kobo --title "/path/to/URLLink.acsm" --output out
 ```
 
 ### Options
@@ -116,6 +126,8 @@ python -m mmdl --source bilibili --url "<manga-bilibili-reader-url>"
 | `--epub-only <title-dir>` | Build an EPUB from an existing downloaded title directory |
 | `--token <t>` | Source auth token (e.g. Tongli Bearer value) |
 | `--book-group <g>` | Source optional param (e.g. Tongli BookGroupID) |
+| `--setup` | One-time account activation/login for a source (e.g. `kobo`) |
+| `--adobe-setup` | Import the machine's ADE device identity from the registry (Kobo `.acsm` fulfill) |
 
 ### Output layout
 

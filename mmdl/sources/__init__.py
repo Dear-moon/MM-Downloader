@@ -3,12 +3,14 @@ from . import mangamillion
 from . import tongli
 from . import bookwalker
 from . import bilibili
+from . import kobo
 
 SOURCES = {
     "mangamillion": mangamillion.MCMillion,
     "tongli": tongli.Tongli,
     "bookwalker": bookwalker.BookWalker,
     "bilibili": bilibili.Bilibili,
+    "kobo": kobo.Kobo,
 }
 
 

@@ -1,10 +1,12 @@
 """Source 抽象基类。
 
-两种能力轨：
+三种能力轨：
 - crawl 轨：list_titles / get_title / get_chapters / get_pages / download_page
   覆盖 MangaMillion、东立这类"按 title_id 遍历 title→chapter→pages"的源。
 - capture 轨：capture_from_url(url) -> CaptureResult
-  覆盖 BookWalker 这类"给一个 reader URL 直接抓整卷字节"的源（延后）。
+  覆盖 BookWalker 这类"给一个 reader URL 直接抓整卷字节"的源。
+- book 轨：get_book(book_id) -> CaptureResult
+  覆盖 Kobo 这类"整本带 DRM 下载 + 解密 + 抽页图"的源（产物与 capture 同构）。
 
 capabilities 声明源支持哪些能力，供 CLI 门控。
 """
@@ -69,4 +71,12 @@ class BaseSource(abc.ABC):
 
     # ---- capture 轨 ----
     def capture_from_url(self, url, *, lang=None, quality=None, **kw) -> CaptureResult:
+        raise NotImplementedError
+
+    # ---- book 轨 ----
+    def get_book(self, book_id, *, lang=None, quality=None, **kw) -> CaptureResult:
+        """下载整本带 DRM 的书并抽成页图 → CaptureResult（与 capture 轨同构）。
+
+        仅 book 能力源（如 Kobo）实现；资源少从 server 整体拉取时用。
+        """
         raise NotImplementedError
